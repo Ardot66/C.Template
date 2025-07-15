@@ -1,11 +1,11 @@
 SHELL = bash
 
-DEPEND = $()
+DEPEND = $() QuickMath Brainfuzz
 DLL_BIN = ../Bin
 BIN = Bin
 SOURCE = Source/*.c
 TESTS = Tests/*.c
-NAME = 
+NAME = BrainfuzzAI
 
 DLL := $(DLL_BIN)/lib$(NAME).dll
 TESTS_EXE := $(BIN)/Tests.exe
@@ -30,7 +30,7 @@ $(DLL): $(SOURCE) $(HEADERS_WILDCARD)/*.h
 	gcc -Wall -Wextra -pedantic $(COMPILE_FLAGS) -fPIC -shared $(SOURCE) $(HEADERS) -L$(DLL_BIN) $(subst $() , -l,$(DEPEND)) -o $(DLL)
 
 $(TESTS_EXE): $(DLL) $(TESTS) $(HEADERS_WILDCARD)/*.h
-	gcc -Wall -Wextra -pedantic $(COMPILE_FLAGS) $(TESTS) $(HEADERS) -L $(DLL_BIN) -l$(NAME) -o $(TESTS_EXE)
+	gcc -Wall -Wextra -pedantic $(COMPILE_FLAGS) $(TESTS) $(HEADERS) -L $(DLL_BIN) -l$(NAME) $(subst $() , -l,$(DEPEND)) -o $(TESTS_EXE)
 
 Clean:
 	rm $(TESTS_EXE) $(DLL)
