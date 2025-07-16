@@ -53,5 +53,16 @@ int main()
     BrainfuzzToken program[programMaxCount];
 
     size_t programCount = 0;
-    BrainfuzzAIEvolve(program, &programCount, programMaxCount, 1000, ScoreProgram);
+    BrainfuzzAIEvolve(program, &programCount, programMaxCount, 10000, ScoreProgram);
+
+    for(size_t x = 0; x < programCount; x++)
+    {
+        char tokenBuffer[256];
+        BrainfuzzWrite(tokenBuffer, sizeof(tokenBuffer), program[x]);
+        printf("%s ", tokenBuffer);
+    }
+    printf("\n");
+
+    double confirmationScore = ScoreProgram(program, programCount);
+    printf("Confirmation score: %lf\n", confirmationScore);
 }

@@ -146,10 +146,10 @@ enum BrainfuzzAIResult BrainfuzzAIEvolve(BrainfuzzToken *program, size_t *progra
         }
     }
 
-    memcpy(program, parentProgram, parentInfo->Count * sizeof(BrainfuzzToken));
-    *programCount = parentInfo->Count;
+    memcpy(program, bestProgram, bestProgramInfo.Count * sizeof(BrainfuzzToken));
+    *programCount = bestProgramInfo.Count;
 
-    printf("Final score: %f\n", bestProgramInfo.Score);
+    printf("Final score: %f\n", bestProgramInfo.Score.Primary);
 
     return BrainfuzzAIResultSuccess;
 }
