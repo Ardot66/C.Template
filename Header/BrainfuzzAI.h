@@ -9,7 +9,7 @@ enum BrainfuzzAIResult
     BrainfuzzAIResultProgramMaxCountExceeded
 };
 
-enum BrainfuzzAIResult BrainfuzzAIMutate(BrainfuzzToken *program, size_t *programCount, size_t programMaxCount, double mutationStrength, double mutationRate);
-enum BrainfuzzAIResult BrainfuzzAIEvolve(BrainfuzzToken *program, size_t *programCount, size_t programMaxCount, uint64_t generations, double (*scoreProgram)(BrainfuzzToken *program, size_t programCount));
+enum BrainfuzzAIResult BrainfuzzAIMutate(BrainfuzzToken *program, size_t *programCount, size_t programMaxCount, double mutationStrength, double mutationRate, uint64_t seed);
+enum BrainfuzzAIResult BrainfuzzAIEvolve(BrainfuzzToken *program, size_t *programCount, size_t programMaxCount, uint64_t generations, double (*scoreProgram)(BrainfuzzToken *program, size_t programCount, double precision));
 
 #endif
