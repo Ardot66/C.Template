@@ -7,206 +7,280 @@
 #include "assert.h"
 #include "stdio.h"
 
-double RandomFloat(RandomState *state)
+enum ProgramState
 {
-    return (double)Random(state) / (double)UINT64_MAX;
+    ProgramStateDead,
+    ProgramStateAlive
+};
+
+typedef struct ProgramInfo 
+{
+    BrainfuzzToken *Program;
+    enum ProgramState State;
+    size_t Count;
+    double Size;
+    double Score;
+    uint64_t Seed;
+} ProgramInfo;
+
+typedef struct EvolutionState
+{
+    void *Allocation;
+
+    size_t GenerationSize;
+    BrainfuzzToken *ProgramBuffer;
+    ProgramInfo *ProgramInfo;
+
+    size_t SurvivingProgramsCount;
+    ProgramInfo **SurvivingPrograms;
+    double SurvivingProgramsSquaredScoreTotal;
+
+} EvolutionState;
+
+double RandomFloat()
+{
+    return (double)GlobalRandom() / (double)UINT64_MAX;
 }
 
-enum BrainfuzzAIResult BrainfuzzAIMutate(BrainfuzzToken *program, size_t *programCount, size_t programMaxCount, double mutationStrength, double mutationRate, uint64_t seed)
+EvolutionState AllocateEvolutionState(size_t generationSize, size_t programMaxCount)
 {
-    RandomState randomState = {.State[0] = (seed >> 32) * seed, .State[1] = (seed << 32) * seed};
+    EvolutionState state;
+    state.GenerationSize = generationSize;
+    state.SurvivingProgramsCount = 0;
 
-    uint64_t mutations = 0;
-    while((double)(Random(&randomState) % 256) * mutationRate > 128.0 && mutations < mutationRate * 2)
+    const size_t programBufferSize = generationSize * programMaxCount * sizeof(*state.ProgramBuffer);
+    const size_t programInfoSize = sizeof(*state.ProgramInfo) * generationSize;
+    const size_t survivingProgramsSize = sizeof(*state.SurvivingPrograms) * (generationSize + 1);
+
+    state.Allocation = malloc(programBufferSize + programInfoSize + survivingProgramsSize);
+
     {
-        mutations++;
-    
-        size_t mutationType = Random(&randomState) % 300;
-        double currentMutationStrength = (RandomFloat(&randomState) - 0.5) * mutationStrength;
+        char *tempAllocation = state.Allocation;
+        state.ProgramBuffer = (void *)tempAllocation; 
+        state.ProgramInfo = (void *)(tempAllocation += programBufferSize);
+        state.SurvivingPrograms = (void *)(tempAllocation += programInfoSize);
+    }
 
-        if(mutationType > 100 && *programCount > 0)
+    for(size_t x = 0; x < generationSize; x++)
+    {
+        state.ProgramInfo[x] = (ProgramInfo)
         {
-            size_t index = (Random(&randomState) % *programCount);
-            program[index].Magnitude += currentMutationStrength;
+            .Program = state.ProgramBuffer + programMaxCount * x,
+            .State = ProgramStateDead,
+            .Count = 0,
+            .Score = 0,
+            .Size = 0,
+            .Seed = 0
+        };
+    };
+
+    return state;
+}
+
+ProgramInfo *SelectParent(EvolutionState *state)
+{
+    double selection = RandomFloat() * state->SurvivingProgramsSquaredScoreTotal;
+
+    for(size_t x = 0; x < state->SurvivingProgramsCount; x++)
+    {
+        ProgramInfo *survivingProgram = state->SurvivingPrograms[x];
+        selection -= survivingProgram->Score * survivingProgram->Score;
+
+        if(selection <= 0)
+            return survivingProgram;
+    }
+
+    return state->SurvivingPrograms[state->SurvivingProgramsCount - 1];
+}
+
+void SetInstructionMagnitude(ProgramInfo *program, size_t index, double magnitude)
+{
+    double oldMagnitude = program->Program[index].Magnitude;
+    program->Program[index].Magnitude = magnitude;
+    program->Size += Abs(magnitude) - Abs(oldMagnitude);
+}
+
+enum BrainfuzzAIResult BrainfuzzAIMutate(ProgramInfo *program, size_t programMaxCount, double mutationStrength, double mutationRate)
+{
+    double mutationDouble = RandomFloat();
+    mutationDouble *= mutationDouble;
+
+    uint64_t mutations = (uint64_t)(mutationDouble * mutationRate) + 1;
+
+    const double 
+        mutateMagnitudeRate = 1,
+        mutateReduceMagnitudeRate = 0.2,
+        mutateInsertRate = 0.1,
+        mutateRateSum = mutateMagnitudeRate + mutateReduceMagnitudeRate + mutateInsertRate;
+
+    for(uint64_t x = 0; x < mutations; x++)
+    {
+        double mutationType = RandomFloat() * mutateRateSum;
+        double currentMutationStrength = (RandomFloat() - 0.5) * 2.0;
+        currentMutationStrength *= currentMutationStrength;
+        currentMutationStrength *= mutationStrength;
+
+        if((mutationType -= mutateMagnitudeRate) < 0.0 && program->Count > 0)
+        {
+            size_t index = (GlobalRandom() % program->Count);
+            SetInstructionMagnitude(program, index, program->Program[index].Magnitude + currentMutationStrength);
         }
-        else if(mutationType > 50 && *programCount > 0)
+        else if((mutationType -= mutateReduceMagnitudeRate) < 0.0 && program->Count > 0)
         {
-            size_t index = (Random(&randomState) % *programCount);
-            program[index].Magnitude /= currentMutationStrength;
+            size_t index = (GlobalRandom() % program->Count);
+            double reduceMutationStrength = Abs(currentMutationStrength) + 1;
+            
+            float oldMagnitude = program->Program[index].Magnitude;
+            float oldSize = program->Size;
+            SetInstructionMagnitude(program, index, program->Program[index].Magnitude / reduceMutationStrength);
 
-            if(program[index].Magnitude * RandomFloat(&randomState) / mutationStrength < 1)
+            if(program->Size < 0)
             {
-                memmove(program + index, program + index + 1, (*programCount - index - 1) * sizeof(BrainfuzzToken));
-                *programCount -= 1;
+                printf("%f, %f, %f, %f\n", oldMagnitude, program->Program[index].Magnitude, oldSize, program->Size);
+                printf("It's %f\n", program->Size);
+                assert(program->Size >= 0);
+            }
+
+            if(program->Program[index].Magnitude * RandomFloat() / reduceMutationStrength < 0.1)
+            {
+                // SetInstructionMagnitude(program, index, 0);
+                // memmove(program->Program + index, program->Program + index + 1, (program->Count - index - 1) * sizeof(BrainfuzzToken));
+                // program->Count -= 1;
             }
         }
-        else 
+        else if((mutationType -= mutateInsertRate) < 0.0)
         {
-            if(programMaxCount <= *programCount)
+            if(programMaxCount <= program->Count)
                 return BrainfuzzAIResultProgramMaxCountExceeded;
             
-            size_t index = Random(&randomState) % (*programCount + 1);
-            assert(index <= *programCount);
-            enum BrainfuzzTokenType tokenType = Random(&randomState) % (BrainfuzzTokenMax + 1);
+            size_t index = GlobalRandom() % (program->Count + 1);
+            assert(index <= program->Count);
 
-            if(index > 0 && program[index - 1].Type == tokenType)
-                program[index - 1].Magnitude += currentMutationStrength;
-            if(index < *programCount - 1 && program[index + 1].Type == tokenType)
-                program[index + 1].Magnitude += currentMutationStrength; 
-            else
+            enum BrainfuzzTokenType tokenType = (GlobalRandom() % BrainfuzzTokenMax) + 1;
+
+            // if(index > 0 && program->Program[index - 1].Type == tokenType)
+            //     SetInstructionMagnitude(program, index - 1, program->Program[index - 1].Magnitude + currentMutationStrength);
+            // else if(program->Program[index].Type == tokenType)
+            //     SetInstructionMagnitude(program, index, program->Program[index].Magnitude + currentMutationStrength);
+            // else
             {
-                memmove(program + index + 1, program + index, (*programCount - index) * sizeof(BrainfuzzToken));
-                *programCount += 1;
-                program[index] = (BrainfuzzToken){.Type = tokenType, .Magnitude = currentMutationStrength};
+                memmove(program->Program + index + 1, program->Program + index, (program->Count - index) * sizeof(BrainfuzzToken));
+                program->Count += 1;
+                program->Program[index] = (BrainfuzzToken){.Type = tokenType, .Magnitude = 0};
+                SetInstructionMagnitude(program, index, currentMutationStrength);
+                if(program->Size < Abs(currentMutationStrength))
+                {
+                    printf("%f, %f", program->Size, currentMutationStrength);
+                    assert(1 == 0);
+                }
             }
         }
+        else
+            assert(1 == 0);
     }
 
     return BrainfuzzAIResultSuccess;
 }
 
-enum BrainfuzzAIResult BrainfuzzAIEvolve(BrainfuzzToken *program, size_t *programCount, size_t programMaxCount, uint64_t generations, double (*scoreProgram)(BrainfuzzToken *program, size_t programCount, double precision))
+enum BrainfuzzAIResult BrainfuzzAIEvolve(BrainfuzzToken *program, size_t *programCount, size_t programMaxCount, uint64_t generations, double (*scoreProgram)(BrainfuzzToken *program, size_t programCount, double programSize, uint64_t precision))
 {   
-    enum ProgramState
-    {
-        ProgramStateInvalid,
-        ProgramStateValid,
-        ProgramStateParent
+    const double survivalRate = 0.9;
+    const double survivalFalloffMultiplier = 0.9;
+
+    EvolutionState state = AllocateEvolutionState(32, programMaxCount);
+
+    ProgramInfo parentInfo = {
+        .Program = program,
+        .State = ProgramStateAlive,
+        .Count = *programCount,
+        .Score = scoreProgram(program, *programCount, 0, 10),
+        .Size = 0,
+        .Seed = 0
     };
 
-    struct ProgramInfo
-    {
-        enum ProgramState State;
-        size_t Count;
-        double Score;
-        uint64_t Seed;
-    };
+    state.SurvivingProgramsCount = 1;
+    state.SurvivingPrograms[0] = &parentInfo;
 
-    double maxAllowedScoreDrop = 0.1f;
-    double allowedScoreDrop = 0.00f;
-
-    const size_t maxGenerationSize = 16;
-
-    BrainfuzzToken *programs = malloc(maxGenerationSize * programMaxCount * sizeof(BrainfuzzToken));
-
-    // Maybe change this out for a malloc to reduce chance of stack overflow
-    struct ProgramInfo programInfo[maxGenerationSize];
-
-    BrainfuzzToken *parentProgram = program;
-    struct ProgramInfo *parentInfo = programInfo;
-    parentInfo->State = ProgramStateParent;
-    parentInfo->Count = *programCount;
-    parentInfo->Score = scoreProgram(program, *programCount, 100);
-
-    printf("StartingScore: %f\n", parentInfo->Score);
-
-    BrainfuzzToken bestProgram[programMaxCount];
-    struct ProgramInfo bestProgramInfo = {.State = ProgramStateInvalid};
+    ProgramInfo *sortedPrograms[state.GenerationSize];
 
     for(uint64_t x = 0; x < generations; x++)
     {
-        if(parentInfo->Score < bestProgramInfo.Score - maxAllowedScoreDrop)
-        {
-            parentInfo->State = ProgramStateInvalid;
-            parentInfo = &bestProgramInfo;
-            parentProgram = bestProgram;
-        }
+        for(size_t y = 0; y < state.GenerationSize; y++)
+        { 
+            ProgramInfo *programInfo = state.ProgramInfo + y;
 
-        parentInfo->Score = (parentInfo->Score * 9 + scoreProgram(parentProgram, parentInfo->Count, 5)) / 10;
-        if(bestProgramInfo.State != ProgramStateInvalid)
-            bestProgramInfo.Score = (bestProgramInfo.Score * 9 + scoreProgram(bestProgram, bestProgramInfo.Count, 5)) / 10;
-        
-        ssize_t highestScorerIndex = -1;
 
-        for(int r = 0; r < 2; r++)
-        {
-            uint64_t seed;
-            double mutationStrength;
-            ssize_t seederIndex = -1;
-
-            switch(r)
+            if(programInfo->State == ProgramStateDead)
             {
-                case 0:
-                {
-                    seed = GlobalRandom();
-                    if(bestProgramInfo.Score < 9.2)
-                        mutationStrength = 2;
-                    else
-                        mutationStrength = 0.1;
-                    break;
-                }
-                case 1:
-                {
-                    // printf("Highest scorer: %f\n", programInfo[highestScorerIndex].Score);
-                    seed = programInfo[highestScorerIndex].Seed;
-                    programInfo[highestScorerIndex].State = ProgramStateParent;
-                    seederIndex = highestScorerIndex;
-                    mutationStrength = 5;
-                    break;
-                }
-            }
+                ProgramInfo *parentInfo = SelectParent(&state);
+                *programInfo = *parentInfo;            
 
-            for(size_t y = 0; y < maxGenerationSize; y++)
-            { 
-                if(programInfo[y].State == ProgramStateParent)
-                    continue;
-
-                BrainfuzzToken *childProgram = programs + y * programMaxCount;
                 for(size_t z = 0; z < parentInfo->Count; z++)
-                    childProgram[z] = parentProgram[z];
+                    programInfo->Program[z] = parentInfo->Program[z];
 
-                struct ProgramInfo childInfo = {
-                    .Count = parentInfo->Count,
-                    .Seed = seed
-                };
+                enum BrainfuzzAIResult result = BrainfuzzAIMutate(programInfo, programMaxCount, 1, 1);
+                programInfo->State = result == BrainfuzzAIResultSuccess ? ProgramStateAlive : ProgramStateDead; 
+            }
 
-                enum BrainfuzzAIResult result = BrainfuzzAIMutate(childProgram, &childInfo.Count, programMaxCount, mutationStrength, 3, seed);
-                
-                childInfo.State = result == BrainfuzzAIResultSuccess ? ProgramStateValid : ProgramStateInvalid; 
-                if(childInfo.State == ProgramStateValid)
+            if(programInfo->State == ProgramStateAlive)
+                programInfo->Score = scoreProgram(programInfo->Program, programInfo->Count, programInfo->Size, 5);
+        }
+
+        for(size_t y = 0; y < state.GenerationSize; y++)
+            sortedPrograms[y] = state.ProgramInfo + y;
+
+        for(size_t y = 0; y < state.GenerationSize; y++)
+        {
+            size_t highestScorerIndex = y;
+            ProgramInfo *highestScorer = sortedPrograms[y];
+
+            for(size_t z = y + 1; z < state.GenerationSize; z++)
+            {
+                if(highestScorer->Score < sortedPrograms[z]->Score && sortedPrograms[z]->State == ProgramStateAlive)
                 {
-                    childInfo.Score = scoreProgram(childProgram, childInfo.Count, 1);
-                    if(highestScorerIndex == -1 || childInfo.Score > programInfo[highestScorerIndex].Score)
-                        highestScorerIndex = y;                    
-                        
-                    programInfo[y] = childInfo;
+                    highestScorer = sortedPrograms[z];
+                    highestScorerIndex = z;
                 }
             }
 
-            if(seederIndex != -1)
-                programInfo[seederIndex].State = ProgramStateValid;
+            ProgramInfo *temp = sortedPrograms[y];
+            sortedPrograms[y] = highestScorer;
+            sortedPrograms[highestScorerIndex] = temp;
         }
 
-        programInfo[highestScorerIndex].Score = scoreProgram(programs + highestScorerIndex * programMaxCount, programInfo[highestScorerIndex].Count, 20);
+        double highestScore = sortedPrograms[0]->Score;
+        double survivalMultiplier = 1;
 
-        printf("%zu Best score: %f (Size: %zu) (Parent: %f Best: %f)\n", x, programInfo[highestScorerIndex].Score, parentInfo->Count, parentInfo->Score, bestProgramInfo.Score);
-        if(programInfo[highestScorerIndex].Score < parentInfo->Score - allowedScoreDrop || programInfo[highestScorerIndex].Score < 0.5)
-            continue;
-        if(programInfo[highestScorerIndex].Score < bestProgramInfo.Score - maxAllowedScoreDrop)
+        state.SurvivingProgramsSquaredScoreTotal = sortedPrograms[0]->Score * sortedPrograms[0]->Score;
+        state.SurvivingProgramsCount = 1;
+        state.SurvivingPrograms[0] = sortedPrograms[0];
+
+        for(size_t y = 1; y < state.GenerationSize; y++)
         {
-            parentInfo->State = ProgramStateInvalid;
-            parentInfo = &bestProgramInfo;
-            parentProgram = bestProgram;
+            ProgramInfo *programInfo = sortedPrograms[y];
+            double scoreMultiplier = programInfo->Score / highestScore;
+            scoreMultiplier *= scoreMultiplier;
+
+            if(survivalMultiplier * scoreMultiplier * RandomFloat() > (1 - survivalRate))
+            {
+                state.SurvivingPrograms[state.SurvivingProgramsCount] = programInfo;
+                state.SurvivingProgramsCount++;
+                state.SurvivingProgramsSquaredScoreTotal += programInfo->Score * programInfo->Score;
+            }
+            else
+                programInfo->State = ProgramStateDead;
+
+            survivalMultiplier *= survivalFalloffMultiplier;
         }
 
-        parentProgram = programs + highestScorerIndex * programMaxCount;
-        parentInfo->State = ProgramStateInvalid;
-
-        parentInfo = programInfo + highestScorerIndex;
-        parentInfo->State = ProgramStateParent;
-
-        if(parentInfo->Score > bestProgramInfo.Score)
-        {
-            memcpy(bestProgram, parentProgram, parentInfo->Count * sizeof(BrainfuzzToken));
-            bestProgramInfo = *parentInfo;
-        }
+        printf("%zu Best score: %f (Size: %zu, %f) %d\n", x, sortedPrograms[0]->Score, sortedPrograms[0]->Count, sortedPrograms[0]->Size, sortedPrograms[0]->State);
     }
 
-    memcpy(program, bestProgram, bestProgramInfo.Count * sizeof(BrainfuzzToken));
-    *programCount = bestProgramInfo.Count;
+    memcpy(program, sortedPrograms[0]->Program, sortedPrograms[0]->Count * sizeof(BrainfuzzToken));
+    *programCount = sortedPrograms[0]->Count;
 
-    printf("Final score: %f\n", bestProgramInfo.Score);
+    printf("Final score: %f\n", sortedPrograms[0]->Score);
 
-    free(programs);
+    free(state.Allocation);
     return BrainfuzzAIResultSuccess;
 }

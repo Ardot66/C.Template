@@ -27,10 +27,10 @@ Compile: $(DLL) $(TESTS_EXE)
 	$(RUN)
 
 $(DLL): $(SOURCE) $(HEADERS_WILDCARD)/*.h
-	gcc -O3 -Wall -Wextra -pedantic $(COMPILE_FLAGS) -fPIC -shared $(SOURCE) $(HEADERS) -L$(DLL_BIN) $(subst $() , -l,$(DEPEND)) -o $(DLL)
+	gcc -Wall -Wextra -pedantic $(COMPILE_FLAGS) -fPIC -shared $(SOURCE) $(HEADERS) -L$(DLL_BIN) $(subst $() , -l,$(DEPEND)) -o $(DLL)
 
 $(TESTS_EXE): $(DLL) $(TESTS) $(HEADERS_WILDCARD)/*.h
-	gcc -O3 -Wall -Wextra -pedantic $(COMPILE_FLAGS) $(TESTS) $(HEADERS) -L $(DLL_BIN) -l$(NAME) $(subst $() , -l,$(DEPEND)) -o $(TESTS_EXE)
+	gcc -Wall -Wextra -pedantic $(COMPILE_FLAGS) $(TESTS) $(HEADERS) -L $(DLL_BIN) -l$(NAME) $(subst $() , -l,$(DEPEND)) -o $(TESTS_EXE)
 
 Clean:
 	rm $(TESTS_EXE) $(DLL)
